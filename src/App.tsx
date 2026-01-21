@@ -3,12 +3,13 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type ChangeEvent,
+  type CSSProperties,
   type DragEvent,
 } from 'react'
 import './App.css'
 
+// Types
 type BookmarkNode = BookmarkItem | FolderItem
 
 type BookmarkItem = {
@@ -114,6 +115,9 @@ type ScanStats = {
   error: number
 }
 
+type Tab = 'import' | 'browse' | 'scan' | 'duplicates' | 'organize' | 'export'
+
+// Utility functions
 const cleanText = (value: string | null) => value?.trim() || 'Untitled'
 
 const readNumberAttr = (element: Element, name: string) => {
@@ -477,7 +481,7 @@ const escapeHtml = (value: string) => {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
-    .replace(/\"/g, '&quot;')
+    .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;')
 }
 
@@ -553,29 +557,9 @@ const normalizeText = (value: string) => {
 }
 
 const stopwords = new Set([
-  'the',
-  'and',
-  'for',
-  'with',
-  'from',
-  'into',
-  'about',
-  'this',
-  'that',
-  'todo',
-  'para',
-  'con',
-  'por',
-  'los',
-  'las',
-  'una',
-  'uno',
-  'del',
-  'la',
-  'el',
-  'de',
-  'y',
-  'en',
+  'the', 'and', 'for', 'with', 'from', 'into', 'about', 'this', 'that',
+  'todo', 'para', 'con', 'por', 'los', 'las', 'una', 'uno', 'del',
+  'la', 'el', 'de', 'y', 'en',
 ])
 
 const tokenizeName = (value: string) => {
@@ -802,11 +786,13 @@ const formatFileSize = (bytes: number) => {
   return `${size.toFixed(size >= 10 ? 0 : 1)} ${units[unitIndex]}`
 }
 
+// Main App Component
 function App() {
   const [parsed, setParsed] = useState<ParsedFile | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isDragging, setIsDragging] = useState(false)
+  const [activeTab, setActiveTab] = useState<Tab>('import')
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
     () => new Set(),
   )
@@ -826,9 +812,9 @@ function App() {
   const [duplicateSelections, setDuplicateSelections] = useState<
     Record<string, string>
   >({})
-  const [dismissedSuggestions, setDismissedSuggestions] = useState<
-    Set<string>
-  >(() => new Set())
+  const [dismissedSuggestions, setDismissedSuggestions] = useState<Set<string>>(
+    () => new Set(),
+  )
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null)
@@ -955,14 +941,6 @@ function App() {
     setScanError(null)
   }
 
-  const preserveScroll = (action: () => void) => {
-    const scrollY = window.scrollY
-    action()
-    window.requestAnimationFrame(() => {
-      window.scrollTo({ top: scrollY })
-    })
-  }
-
   const scheduleScanUpdate = () => {
     if (scanUpdateTimerRef.current !== null) return
     scanUpdateTimerRef.current = window.setTimeout(() => {
@@ -988,6 +966,7 @@ function App() {
         lastModified: file.lastModified,
         importedAt: Date.now(),
       })
+      setActiveTab('browse')
     } catch (err) {
       setParsed(null)
       setError(err instanceof Error ? err.message : 'Import failed.')
@@ -1379,27 +1358,23 @@ function App() {
   const acceptSuggestion = (suggestion: MergeSuggestion) => {
     if (!parsed) return
     if (suggestion.sources.length === 0) return
-    preserveScroll(() => {
-      const nextRoot = mergeFoldersIntoTarget(
-        parsed.root,
-        suggestion.sources.map((source) => source.id),
-        suggestion.targetId,
-      )
-      if (nextRoot === parsed.root) return
-      setParsed({ ...parsed, root: nextRoot })
-      setExpandedFolders((prev) => {
-        const next = new Set(prev)
-        next.add(suggestion.targetId)
-        return next
-      })
-      resetScan()
+    const nextRoot = mergeFoldersIntoTarget(
+      parsed.root,
+      suggestion.sources.map((source) => source.id),
+      suggestion.targetId,
+    )
+    if (nextRoot === parsed.root) return
+    setParsed({ ...parsed, root: nextRoot })
+    setExpandedFolders((prev) => {
+      const next = new Set(prev)
+      next.add(suggestion.targetId)
+      return next
     })
+    resetScan()
   }
 
   const dismissSuggestion = (id: string) => {
-    preserveScroll(() => {
-      setDismissedSuggestions((prev) => new Set(prev).add(id))
-    })
+    setDismissedSuggestions((prev) => new Set(prev).add(id))
   }
 
   const updateDuplicateSelection = (key: string, id: string) => {
@@ -1414,47 +1389,10 @@ function App() {
       group.items.filter((item) => item.id !== keepId).map((item) => item.id),
     )
     if (idsToRemove.size === 0) return
-    preserveScroll(() => {
-      const nextRoot = removeBookmarksFromTree(parsed.root, idsToRemove)
-      setParsed({ ...parsed, root: nextRoot })
-      resetScan()
-    })
+    const nextRoot = removeBookmarksFromTree(parsed.root, idsToRemove)
+    setParsed({ ...parsed, root: nextRoot })
+    resetScan()
   }
-
-  const scanProgress = scanStats.total
-    ? Math.round((scanStats.scanned / scanStats.total) * 100)
-    : 0
-
-  const scanStateLabel = (() => {
-    switch (scanState) {
-      case 'running':
-        return 'Scanning'
-      case 'done':
-        return 'Scan complete'
-      case 'stopped':
-        return 'Scan stopped'
-      case 'error':
-        return 'Scan error'
-      default:
-        return 'Ready to scan'
-    }
-  })()
-
-  const filteredResults =
-    scanFilter === 'broken'
-      ? scanResults.filter((result) => result.status === 'broken')
-      : scanResults
-  const scanResultLimit = scanFilter === 'broken' ? 500 : 300
-  const visibleResults = filteredResults.slice(0, scanResultLimit)
-  const isResultsTruncated = filteredResults.length > visibleResults.length
-  const scanEmptyMessage =
-    scanStats.scanned === 0
-      ? 'Run a scan to see results.'
-      : filteredResults.length === 0
-        ? scanFilter === 'broken'
-          ? 'No broken links found yet.'
-          : 'No results to show.'
-        : ''
 
   const toggleFolder = (id: string) => {
     setExpandedFolders((prev) => {
@@ -1468,630 +1406,627 @@ function App() {
     })
   }
 
-  const statusLine = (() => {
-    if (isLoading) return 'Parsing bookmarks...'
-    if (error) return error
-    if (parsed)
-      return `Imported ${stats.bookmarks.toLocaleString()} bookmarks in ${stats.folders.toLocaleString()} folders.`
-    return 'Drop a Chrome/Edge bookmark HTML export to begin.'
-  })()
+  const scanProgress = scanStats.total
+    ? Math.round((scanStats.scanned / scanStats.total) * 100)
+    : 0
 
-  const renderNode = (current: BookmarkNode, depth: number) => {
-    const isDragging = draggingId === current.id
-    const isDropTarget = dropTarget?.id === current.id
-    const dropClass = isDropTarget ? `drop-${dropTarget?.position}` : ''
-    if (current.type === 'bookmark') {
-      return (
-        <li
-          key={current.id}
-          className={`tree-row bookmark ${dropClass} ${isDragging ? 'dragging' : ''}`}
-          style={{ '--depth': depth } as CSSProperties}
-        >
-          <div
-            className="tree-row-inner"
-            onDragOver={(event) => handleDragOver(event, current)}
-            onDrop={(event) => handleDrop(event, current)}
-          >
-            <span
-              className="drag-handle"
-              draggable
-              aria-label="Drag bookmark"
-              onDragStart={(event) => handleDragStart(event, current.id)}
-              onDragEnd={handleDragEnd}
-            >
-              ::
-            </span>
-            <span className="tree-toggle-spacer" aria-hidden="true" />
-            <span className="tree-badge">Link</span>
-            <div className="tree-content">
-              <span className="tree-title">{current.title}</span>
-              <span className="tree-meta" title={current.url}>
-                {current.url || 'No URL found'}
-              </span>
-            </div>
-            <div className="tree-actions" />
-          </div>
-        </li>
-      )
-    }
+  const filteredResults =
+    scanFilter === 'broken'
+      ? scanResults.filter((result) => result.status === 'broken')
+      : scanResults
 
-    const isExpanded = expandedFolders.has(current.id)
-    const statsForFolder = folderStats.get(current.id)
-    const isRenaming = renamingFolderId === current.id
+  const renderTreeNode = (node: BookmarkNode, depth: number) => {
+    const isExpanded = node.type === 'folder' && expandedFolders.has(node.id)
+    const isDraggingThis = draggingId === node.id
+    const isDropTarget =
+      dropTarget?.id === node.id && dropTarget.position === 'inside'
+    const isRenaming = renamingFolderId === node.id
+    const nodeStats = node.type === 'folder' ? folderStats.get(node.id) : null
+
     return (
-      <li
-        key={current.id}
-        className={`tree-row folder ${isExpanded ? 'open' : ''} ${dropClass} ${isDragging ? 'dragging' : ''}`}
-        style={{ '--depth': depth } as CSSProperties}
-      >
+      <li key={node.id} className="tree-item">
         <div
-          className="tree-row-inner"
-          onDragOver={(event) => handleDragOver(event, current)}
-          onDrop={(event) => handleDrop(event, current)}
+          className={`tree-row ${isDraggingThis ? 'dragging' : ''} ${isDropTarget ? 'drop-target' : ''}`}
+          draggable={!isRenaming}
+          onDragStart={(e) => handleDragStart(e, node.id)}
+          onDragEnd={handleDragEnd}
+          onDragOver={(e) => handleDragOver(e, node)}
+          onDrop={(e) => handleDrop(e, node)}
         >
-          <span
-            className="drag-handle"
-            draggable={!isRenaming}
-            aria-label="Drag folder"
-            onDragStart={(event) => handleDragStart(event, current.id)}
-            onDragEnd={handleDragEnd}
-          >
-            ::
+          <div className="tree-indent" style={{ '--depth': depth } as CSSProperties} />
+          {node.type === 'folder' ? (
+            <button
+              type="button"
+              className="tree-toggle"
+              onClick={() => toggleFolder(node.id)}
+            >
+              {isExpanded ? '−' : '+'}
+            </button>
+          ) : (
+            <div className="tree-toggle-placeholder" />
+          )}
+          <span className={`tree-icon ${node.type}`}>
+            {node.type === 'folder' ? '📁' : '🔗'}
           </span>
-          <button
-            type="button"
-            className="tree-toggle"
-            onClick={() => toggleFolder(current.id)}
-            aria-expanded={isExpanded}
-            aria-label={isExpanded ? 'Collapse folder' : 'Expand folder'}
-          >
-            {isExpanded ? '-' : '+'}
-          </button>
-          <span className="tree-badge">Folder</span>
           <div className="tree-content">
             {isRenaming ? (
-              <>
-                <input
-                  className="rename-input"
-                  value={renameValue}
-                  onChange={(event) => setRenameValue(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') {
-                      saveRename()
-                    }
-                    if (event.key === 'Escape') {
-                      cancelRename()
-                    }
-                  }}
-                  autoFocus
-                />
-                <div className="rename-actions">
-                  <button
-                    type="button"
-                    className="action-button"
-                    onClick={saveRename}
-                  >
-                    Save
-                  </button>
-                  <button
-                    type="button"
-                    className="action-button ghost"
-                    onClick={cancelRename}
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </>
+              <input
+                className="rename-input"
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') saveRename()
+                  if (e.key === 'Escape') cancelRename()
+                }}
+                autoFocus
+              />
             ) : (
               <>
-                <span className="tree-title">{current.title}</span>
-                <span className="tree-meta">
-                  {statsForFolder
-                    ? `${statsForFolder.bookmarks} bookmarks, ${statsForFolder.folders} folders`
-                    : '0 bookmarks, 0 folders'}
-                </span>
+                <div className="tree-title">{node.title}</div>
+                {node.type === 'bookmark' && (
+                  <div className="tree-meta">{node.url}</div>
+                )}
               </>
             )}
           </div>
-          <div className="tree-actions">
-            {isRenaming ? null : (
-              <>
-                <button
-                  type="button"
-                  className="action-button"
-                  onClick={() => startRename(current)}
-                >
-                  Rename
-                </button>
-                <button
-                  type="button"
-                  className="action-button danger"
-                  onClick={() => deleteFolder(current.id, current.title)}
-                >
-                  Delete
-                </button>
-              </>
-            )}
-          </div>
+          {nodeStats && (
+            <span className="tree-count">{nodeStats.bookmarks}</span>
+          )}
+          {node.type === 'folder' && !isRenaming && (
+            <div className="tree-actions">
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => startRename(node)}
+              >
+                Rename
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => deleteFolder(node.id, node.title)}
+              >
+                Delete
+              </button>
+            </div>
+          )}
+          {isRenaming && (
+            <div className="tree-actions">
+              <button
+                type="button"
+                className="btn btn-sm btn-primary"
+                onClick={saveRename}
+              >
+                Save
+              </button>
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={cancelRename}
+              >
+                Cancel
+              </button>
+            </div>
+          )}
         </div>
-        {isExpanded && current.children.length > 0 ? (
+        {node.type === 'folder' && isExpanded && node.children.length > 0 && (
           <ul className="tree-children">
-            {current.children.map((child) => renderNode(child, depth + 1))}
+            {node.children.map((child) => renderTreeNode(child, depth + 1))}
           </ul>
-        ) : null}
+        )}
       </li>
     )
   }
 
+  const tabs: { id: Tab; label: string; icon: string; badge?: number }[] = [
+    { id: 'import', label: 'Import', icon: '📥' },
+    { id: 'browse', label: 'Browse', icon: '📂', badge: stats.bookmarks || undefined },
+    { id: 'scan', label: 'Scan Links', icon: '🔍', badge: scanStats.broken || undefined },
+    { id: 'duplicates', label: 'Duplicates', icon: '📋', badge: duplicateGroups.length || undefined },
+    { id: 'organize', label: 'Organize', icon: '✨', badge: visibleSuggestions.length || undefined },
+    { id: 'export', label: 'Export', icon: '📤' },
+  ]
+
   return (
     <div className="app">
-      <header className="hero">
-        <div className="hero-copy">
-          <span className="eyebrow">Bookmark Cleanup Manager</span>
-          <h1>Rescue the archive.</h1>
-          <p className="subtitle">
-            Import an export file from Chrome or Edge, rebuild the folder tree,
-            and prepare your collection for a full cleanup workflow.
-          </p>
-          <div className="stepper">
-            <span className="step active">01 Import</span>
-            <span className="step">02 Scan</span>
-            <span className="step">03 Deduplicate</span>
-            <span className="step">04 Organize</span>
-            <span className="step">05 Export</span>
-          </div>
+      <header className="header">
+        <div className="logo">
+          <div className="logo-icon">📚</div>
+          <span className="logo-text">Bookmark Cleaner</span>
         </div>
-        <div className="hero-card">
-          <div className="hero-card-header">
-            <h2>Import status</h2>
-            <span className={`status ${error ? 'error' : 'ok'}`}>
-              {parsed ? 'Loaded' : 'Awaiting file'}
-            </span>
-          </div>
-          <p className={`status-line ${error ? 'error' : ''}`}>{statusLine}</p>
-          <div className="meta-grid">
-            <div>
-              <span className="meta-label">File name</span>
-              <span className="meta-value">
-                {parsed?.fileName || 'No file yet'}
-              </span>
+        {parsed && (
+          <div className="header-stats">
+            <div className="header-stat">
+              <strong>{stats.bookmarks.toLocaleString()}</strong> bookmarks
             </div>
-            <div>
-              <span className="meta-label">File size</span>
-              <span className="meta-value">
-                {parsed ? formatFileSize(parsed.fileSize) : '--'}
-              </span>
+            <div className="header-stat">
+              <strong>{stats.folders.toLocaleString()}</strong> folders
             </div>
-            <div>
-              <span className="meta-label">Imported at</span>
-              <span className="meta-value">
-                {parsed
-                  ? new Date(parsed.importedAt).toLocaleString()
-                  : '--'}
-              </span>
-            </div>
-            <div>
-              <span className="meta-label">Depth</span>
-              <span className="meta-value">
-                {parsed ? `${stats.maxDepth} levels` : '--'}
-              </span>
+            <div className="header-stat">
+              <strong>{duplicateGroups.length}</strong> duplicates
             </div>
           </div>
-        </div>
+        )}
       </header>
 
-      <main className="content-grid">
-        <section
-          className={`panel drop-panel ${isDragging ? 'dragging' : ''}`}
-          onDragOver={(event) => {
-            event.preventDefault()
-            setIsDragging(true)
-          }}
-          onDragLeave={() => setIsDragging(false)}
-          onDrop={onDrop}
-        >
-          <div className="drop-header">
-            <span className="drop-icon">[]</span>
-            <div>
-              <h3>Import bookmark file</h3>
-              <p>
-                Drag your exported HTML file here. We rebuild folder structure
-                and keep every URL intact.
-              </p>
-            </div>
-          </div>
-          <div className="drop-actions">
-            <button
-              className="primary"
-              type="button"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              Choose file
-            </button>
-            <span className="drop-hint">or drop the HTML file here</span>
-          </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".html,text/html"
-            onChange={onFileChange}
-            hidden
-          />
-          <div className="drop-details">
-            <div>
-              <span className="detail-label">Supported</span>
-              <span className="detail-value">Chrome + Edge export format</span>
-            </div>
-            <div>
-              <span className="detail-label">Capacity</span>
-              <span className="detail-value">10,000+ bookmarks</span>
-            </div>
-            <div>
-              <span className="detail-label">Parsing</span>
-              <span className="detail-value">In-browser, no upload</span>
-            </div>
-          </div>
-        </section>
-
-        <section className="panel stats-panel">
-          <h3>Collection snapshot</h3>
-          <div className="stats-grid">
-            <div className="stat">
-              <span className="stat-label">Bookmarks</span>
-              <span className="stat-value">
-                {parsed ? stats.bookmarks.toLocaleString() : '--'}
-              </span>
-            </div>
-            <div className="stat">
-              <span className="stat-label">Folders</span>
-              <span className="stat-value">
-                {parsed ? stats.folders.toLocaleString() : '--'}
-              </span>
-            </div>
-            <div className="stat">
-              <span className="stat-label">Total items</span>
-              <span className="stat-value">
-                {parsed
-                  ? (stats.bookmarks + stats.folders).toLocaleString()
-                  : '--'}
-              </span>
-            </div>
-            <div className="stat">
-              <span className="stat-label">Last modified</span>
-              <span className="stat-value">
-                {parsed
-                  ? new Date(parsed.lastModified).toLocaleDateString()
-                  : '--'}
-              </span>
-            </div>
-          </div>
-          <div className="stat-note">
-            Parsing stays local. Large files can take a few seconds.
-          </div>
-        </section>
-
-        <section className="panel tree-panel">
-          <div className="preview-header">
-            <h3>Bookmark tree</h3>
-            <span className="preview-limit">expand folders to explore</span>
-          </div>
-          {parsed ? (
-            <ul className="tree-list">
-              {parsed.root.children.map((node) => renderNode(node, 0))}
-            </ul>
-          ) : (
-            <div className="preview-empty">
-              Import a file to reveal your full bookmark tree.
-            </div>
-          )}
-        </section>
-
-        <section className="panel scan-panel">
-          <div className="scan-header">
-            <div>
-              <h3>Broken link scan</h3>
-              <p>
-                Check bookmark URLs for 4xx/5xx responses. Status checks run
-                locally via the scan service.
-              </p>
-            </div>
-            <div className="scan-actions">
+      <main className="main">
+        <aside className="sidebar">
+          <nav className="nav">
+            {tabs.map((tab) => (
               <button
-                className="primary"
+                key={tab.id}
                 type="button"
-                onClick={() => void startScan()}
-                disabled={!parsed || scanState === 'running' || isLoading}
+                className={`nav-item ${activeTab === tab.id ? 'active' : ''} ${
+                  !parsed && tab.id !== 'import' ? 'disabled' : ''
+                }`}
+                onClick={() => {
+                  if (parsed || tab.id === 'import') {
+                    setActiveTab(tab.id)
+                  }
+                }}
+                disabled={!parsed && tab.id !== 'import'}
               >
-                {scanState === 'running' ? 'Scanning...' : 'Start scan'}
+                <span className="nav-icon">{tab.icon}</span>
+                {tab.label}
+                {tab.badge !== undefined && tab.badge > 0 && (
+                  <span className="nav-badge">{tab.badge}</span>
+                )}
               </button>
-              {scanState === 'running' ? (
-                <button
-                  className="secondary"
-                  type="button"
-                  onClick={stopScan}
+            ))}
+          </nav>
+        </aside>
+
+        <section className="content">
+          {/* Import Tab */}
+          {activeTab === 'import' && (
+            <div className="panel">
+              <div className="panel-header">
+                <h1 className="panel-title">Import Bookmarks</h1>
+                <p className="panel-subtitle">
+                  Upload your Chrome or Edge bookmark export file to get started
+                </p>
+              </div>
+              <div className="panel-body">
+                <div
+                  className={`import-zone ${isDragging ? 'dragging' : ''}`}
+                  onDragOver={(e) => {
+                    e.preventDefault()
+                    setIsDragging(true)
+                  }}
+                  onDragLeave={() => setIsDragging(false)}
+                  onDrop={onDrop}
                 >
-                  Stop
-                </button>
-              ) : null}
-            </div>
-          </div>
+                  <div className="import-icon">📁</div>
+                  <h3 className="import-title">
+                    {isLoading ? 'Processing...' : 'Drop your bookmarks file here'}
+                  </h3>
+                  <p className="import-text">
+                    Supports Chrome and Edge HTML bookmark exports
+                  </p>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isLoading}
+                  >
+                    Choose File
+                  </button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".html,text/html"
+                    onChange={onFileChange}
+                    hidden
+                  />
+                </div>
 
-          <div className="scan-meta">
-            <span className="scan-state">{scanStateLabel}</span>
-            <span className="scan-targets">
-              {scanTargets.length.toLocaleString()} bookmarks ready
-            </span>
-          </div>
+                {error && (
+                  <p style={{ color: 'var(--danger)', marginTop: '1rem' }}>
+                    {error}
+                  </p>
+                )}
 
-          <div className="scan-progress">
-            <div className="progress-track">
-              <div
-                className="progress-bar"
-                style={{ width: `${scanProgress}%` }}
-              />
-            </div>
-            <div className="progress-meta">
-              <span>
-                {scanStats.scanned.toLocaleString()} /{' '}
-                {scanStats.total.toLocaleString()}
-              </span>
-              <span>{scanProgress}%</span>
-            </div>
-          </div>
-
-          <div className="scan-summary">
-            <div className="scan-stat">
-              <span className="stat-label">OK</span>
-              <span className="stat-value">
-                {scanStats.ok.toLocaleString()}
-              </span>
-            </div>
-            <div className="scan-stat">
-              <span className="stat-label">Broken</span>
-              <span className="stat-value">
-                {scanStats.broken.toLocaleString()}
-              </span>
-            </div>
-            <div className="scan-stat">
-              <span className="stat-label">Errors</span>
-              <span className="stat-value">
-                {scanStats.error.toLocaleString()}
-              </span>
-            </div>
-            <div className="scan-stat">
-              <span className="stat-label">Remaining</span>
-              <span className="stat-value">
-                {(scanStats.total - scanStats.scanned).toLocaleString()}
-              </span>
-            </div>
-          </div>
-
-          <div className="scan-filter">
-            <button
-              type="button"
-              className={`chip ${scanFilter === 'all' ? 'active' : ''}`}
-              onClick={() => setScanFilter('all')}
-            >
-              All results
-            </button>
-            <button
-              type="button"
-              className={`chip ${scanFilter === 'broken' ? 'active' : ''}`}
-              onClick={() => setScanFilter('broken')}
-            >
-              Broken only
-            </button>
-          </div>
-
-          {scanError ? <p className="scan-error">{scanError}</p> : null}
-
-          {scanEmptyMessage ? (
-            <p className="scan-empty">{scanEmptyMessage}</p>
-          ) : (
-            <ul className="scan-results">
-              {visibleResults.map((result) => {
-                const statusLabel =
-                  result.status === 'error'
-                    ? 'Error'
-                    : result.status === 'broken'
-                      ? `Broken ${result.statusCode ?? ''}`.trim()
-                      : `OK ${result.statusCode ?? ''}`.trim()
-                return (
-                  <li key={result.id} className={`scan-row ${result.status}`}>
-                    <span className="scan-status">{statusLabel}</span>
-                    <div className="scan-main">
-                      <span className="scan-title">{result.title}</span>
-                      <span className="scan-url" title={result.url}>
-                        {result.url || 'No URL'}
-                      </span>
-                      {result.path ? (
-                        <span className="scan-path">{result.path}</span>
-                      ) : null}
-                      {result.error ? (
-                        <span className="scan-error-detail">
-                          {result.error}
-                        </span>
-                      ) : null}
+                {parsed && (
+                  <div className="file-info">
+                    <div className="file-info-item">
+                      <div className="file-info-label">File name</div>
+                      <div className="file-info-value">{parsed.fileName}</div>
                     </div>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-
-          {isResultsTruncated ? (
-            <p className="scan-truncate">
-              Showing first {scanResultLimit.toLocaleString()} results. Refine
-              the filter to see more.
-            </p>
-          ) : null}
-        </section>
-
-        <section className="panel dup-panel">
-          <div className="dup-header">
-            <div>
-              <h3>Duplicate finder</h3>
-              <p>
-                Groups bookmarks by URL variants (http/https, trailing slash,
-                query string removed). Choose a primary link and remove the rest.
-              </p>
-            </div>
-            <span className="dup-count">
-              {duplicateGroups.length.toLocaleString()} groups
-            </span>
-          </div>
-
-          {duplicateGroups.length === 0 ? (
-            <p className="dup-empty">No duplicates detected yet.</p>
-          ) : (
-            <ul className="dup-groups">
-              {duplicateGroups.map((group) => (
-                <li key={group.key} className="dup-group">
-                  <div className="dup-group-header">
-                    <div>
-                      <span className="dup-label">Normalized URL</span>
-                      <span className="dup-key" title={group.key}>
-                        {group.key}
-                      </span>
+                    <div className="file-info-item">
+                      <div className="file-info-label">File size</div>
+                      <div className="file-info-value">
+                        {formatFileSize(parsed.fileSize)}
+                      </div>
                     </div>
-                    <div className="dup-actions">
-                      <span className="dup-count-chip">
-                        {group.items.length} items
-                      </span>
-                      <button
-                        type="button"
-                        className="secondary"
-                        onClick={() => removeDuplicateGroup(group)}
-                      >
-                        Remove others
-                      </button>
+                    <div className="file-info-item">
+                      <div className="file-info-label">Bookmarks</div>
+                      <div className="file-info-value">
+                        {stats.bookmarks.toLocaleString()}
+                      </div>
+                    </div>
+                    <div className="file-info-item">
+                      <div className="file-info-label">Folders</div>
+                      <div className="file-info-value">
+                        {stats.folders.toLocaleString()}
+                      </div>
                     </div>
                   </div>
-                  <ul className="dup-items">
-                    {group.items.map((item) => (
-                      <li key={item.id} className="dup-item">
-                        <label className="dup-radio">
-                          <input
-                            type="radio"
-                            name={`dup-${group.key}`}
-                            value={item.id}
-                            checked={duplicateSelections[group.key] === item.id}
-                            onChange={() =>
-                              updateDuplicateSelection(group.key, item.id)
-                            }
-                          />
-                          <span className="dup-radio-label">Primary</span>
-                        </label>
-                        <div className="dup-item-main">
-                          <span className="dup-title">{item.title}</span>
-                          <span className="dup-url" title={item.url}>
-                            {item.url}
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Browse Tab */}
+          {activeTab === 'browse' && parsed && (
+            <div className="panel">
+              <div className="panel-header">
+                <h1 className="panel-title">Browse Bookmarks</h1>
+                <p className="panel-subtitle">
+                  Explore your bookmark tree and reorganize with drag and drop
+                </p>
+              </div>
+              <div className="panel-body">
+                <div className="stats-grid">
+                  <div className="stat-card">
+                    <div className="stat-value">
+                      {stats.bookmarks.toLocaleString()}
+                    </div>
+                    <div className="stat-label">Bookmarks</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-value">
+                      {stats.folders.toLocaleString()}
+                    </div>
+                    <div className="stat-label">Folders</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-value">{stats.maxDepth}</div>
+                    <div className="stat-label">Max Depth</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-value">{duplicateGroups.length}</div>
+                    <div className="stat-label">Duplicates</div>
+                  </div>
+                </div>
+
+                <div className="tree-container">
+                  <ul className="tree-list">
+                    {parsed.root.children.map((node) =>
+                      renderTreeNode(node, 0),
+                    )}
+                  </ul>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Scan Tab */}
+          {activeTab === 'scan' && parsed && (
+            <div className="panel">
+              <div className="panel-header">
+                <h1 className="panel-title">Scan for Broken Links</h1>
+                <p className="panel-subtitle">
+                  Check all your bookmarks for broken URLs
+                </p>
+              </div>
+              <div className="panel-body">
+                <div className="scan-controls">
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => void startScan()}
+                    disabled={scanState === 'running'}
+                  >
+                    {scanState === 'running' ? 'Scanning...' : 'Start Scan'}
+                  </button>
+                  {scanState === 'running' && (
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={stopScan}
+                    >
+                      Stop
+                    </button>
+                  )}
+                  <span
+                    className={`scan-status ${scanState === 'running' ? 'running' : ''} ${scanState === 'done' ? 'done' : ''}`}
+                  >
+                    {scanState === 'idle' && 'Ready to scan'}
+                    {scanState === 'running' && `Scanning... ${scanProgress}%`}
+                    {scanState === 'done' && 'Scan complete'}
+                    {scanState === 'stopped' && 'Scan stopped'}
+                    {scanState === 'error' && 'Scan error'}
+                  </span>
+                </div>
+
+                {scanStats.total > 0 && (
+                  <>
+                    <div className="progress-bar">
+                      <div
+                        className="progress-fill"
+                        style={{ width: `${scanProgress}%` }}
+                      />
+                    </div>
+
+                    <div className="scan-summary">
+                      <div className="scan-stat ok">
+                        <div className="scan-stat-value">
+                          {scanStats.ok.toLocaleString()}
+                        </div>
+                        <div className="scan-stat-label">OK</div>
+                      </div>
+                      <div className="scan-stat broken">
+                        <div className="scan-stat-value">
+                          {scanStats.broken.toLocaleString()}
+                        </div>
+                        <div className="scan-stat-label">Broken</div>
+                      </div>
+                      <div className="scan-stat error">
+                        <div className="scan-stat-value">
+                          {scanStats.error.toLocaleString()}
+                        </div>
+                        <div className="scan-stat-label">Errors</div>
+                      </div>
+                      <div className="scan-stat">
+                        <div className="scan-stat-value">
+                          {(scanStats.total - scanStats.scanned).toLocaleString()}
+                        </div>
+                        <div className="scan-stat-label">Remaining</div>
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {scanError && (
+                  <p style={{ color: 'var(--danger)' }}>{scanError}</p>
+                )}
+
+                {scanResults.length > 0 && (
+                  <>
+                    <div className="filter-tabs">
+                      <button
+                        type="button"
+                        className={`filter-tab ${scanFilter === 'all' ? 'active' : ''}`}
+                        onClick={() => setScanFilter('all')}
+                      >
+                        All ({scanResults.length})
+                      </button>
+                      <button
+                        type="button"
+                        className={`filter-tab ${scanFilter === 'broken' ? 'active' : ''}`}
+                        onClick={() => setScanFilter('broken')}
+                      >
+                        Broken ({scanStats.broken})
+                      </button>
+                    </div>
+
+                    <ul className="results-list">
+                      {filteredResults.slice(0, 100).map((result) => (
+                        <li key={result.id} className="result-item">
+                          <span className={`result-status ${result.status}`}>
+                            {result.status === 'ok' && `OK ${result.statusCode || ''}`}
+                            {result.status === 'broken' && `${result.statusCode || 'Broken'}`}
+                            {result.status === 'error' && 'Error'}
                           </span>
-                          {item.path ? (
-                            <span className="dup-path">{item.path}</span>
-                          ) : (
-                            <span className="dup-path">Root</span>
-                          )}
+                          <div className="result-content">
+                            <div className="result-title">{result.title}</div>
+                            <div className="result-url">{result.url}</div>
+                            {result.path && (
+                              <div className="result-path">{result.path}</div>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+
+                {scanStats.scanned === 0 && scanState === 'idle' && (
+                  <div className="results-empty">
+                    Click "Start Scan" to check all your bookmarks for broken links.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Duplicates Tab */}
+          {activeTab === 'duplicates' && parsed && (
+            <div className="panel">
+              <div className="panel-header">
+                <h1 className="panel-title">Find Duplicates</h1>
+                <p className="panel-subtitle">
+                  {duplicateGroups.length} duplicate groups found
+                </p>
+              </div>
+              <div className="panel-body">
+                {duplicateGroups.length === 0 ? (
+                  <div className="dup-empty">
+                    No duplicate bookmarks found. Your collection is clean!
+                  </div>
+                ) : (
+                  <ul className="dup-list">
+                    {duplicateGroups.map((group) => (
+                      <li key={group.key} className="dup-group">
+                        <div className="dup-group-header">
+                          <span className="dup-url" title={group.key}>
+                            {group.key}
+                          </span>
+                          <span className="dup-count">
+                            {group.items.length} copies
+                          </span>
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-danger"
+                            onClick={() => removeDuplicateGroup(group)}
+                          >
+                            Remove Others
+                          </button>
+                        </div>
+                        <ul className="dup-items">
+                          {group.items.map((item) => (
+                            <li key={item.id} className="dup-item">
+                              <input
+                                type="radio"
+                                name={`dup-${group.key}`}
+                                checked={
+                                  duplicateSelections[group.key] === item.id
+                                }
+                                onChange={() =>
+                                  updateDuplicateSelection(group.key, item.id)
+                                }
+                              />
+                              <div className="dup-item-content">
+                                <div className="dup-item-title">{item.title}</div>
+                                <div className="dup-item-path">
+                                  {item.path || 'Root'}
+                                </div>
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Organize Tab */}
+          {activeTab === 'organize' && parsed && (
+            <div className="panel">
+              <div className="panel-header">
+                <h1 className="panel-title">Organization Suggestions</h1>
+                <p className="panel-subtitle">
+                  {visibleSuggestions.length} folder merge suggestions
+                </p>
+              </div>
+              <div className="panel-body">
+                {visibleSuggestions.length === 0 ? (
+                  <div className="suggest-empty">
+                    No merge suggestions available. Your folders are well organized!
+                  </div>
+                ) : (
+                  <ul className="suggest-list">
+                    {visibleSuggestions.map((suggestion) => (
+                      <li key={suggestion.id} className="suggest-card">
+                        <div className="suggest-header">
+                          <span className="suggest-score">
+                            {Math.round(suggestion.score * 100)}% match
+                          </span>
+                          <div className="suggest-actions">
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-primary"
+                              onClick={() => acceptSuggestion(suggestion)}
+                            >
+                              Merge
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-ghost"
+                              onClick={() => dismissSuggestion(suggestion.id)}
+                            >
+                              Dismiss
+                            </button>
+                          </div>
+                        </div>
+                        <div className="suggest-body">
+                          <div className="suggest-section">
+                            <div className="suggest-label">Keep</div>
+                            <div className="suggest-folder">
+                              {suggestion.targetTitle}
+                            </div>
+                            <div className="suggest-path">
+                              {suggestion.targetPath}
+                            </div>
+                          </div>
+                          <div className="suggest-section">
+                            <div className="suggest-label">
+                              Merge into above ({suggestion.sources.length})
+                            </div>
+                            {suggestion.sources.map((source) => (
+                              <div key={source.id} style={{ marginTop: '0.5rem' }}>
+                                <div className="suggest-folder">{source.title}</div>
+                                <div className="suggest-path">{source.path}</div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       </li>
                     ))}
                   </ul>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <section className="panel suggest-panel">
-          <div className="suggest-header">
-            <div>
-              <h3>Organization suggestions</h3>
-              <p>
-                We look for similar folder names and suggest safe merges to
-                reduce clutter.
-              </p>
+                )}
+              </div>
             </div>
-            <span className="suggest-count">
-              {visibleSuggestions.length.toLocaleString()} suggestions
-            </span>
-          </div>
+          )}
 
-          {visibleSuggestions.length === 0 ? (
-            <p className="suggest-empty">No merge suggestions right now.</p>
-          ) : (
-            <ul className="suggest-list">
-              {visibleSuggestions.map((suggestion) => (
-                <li key={suggestion.id} className="suggest-row">
-                  <div className="suggest-main">
-                    <span className="suggest-score">
-                      {Math.round(suggestion.score * 100)}% match
+          {/* Export Tab */}
+          {activeTab === 'export' && parsed && (
+            <div className="panel">
+              <div className="panel-header">
+                <h1 className="panel-title">Export Bookmarks</h1>
+                <p className="panel-subtitle">
+                  Download your cleaned bookmark file
+                </p>
+              </div>
+              <div className="panel-body">
+                <div className="export-info">
+                  <div className="export-stat">
+                    <span className="export-stat-label">Total Bookmarks</span>
+                    <span className="export-stat-value">
+                      {stats.bookmarks.toLocaleString()}
                     </span>
-                    <div className="suggest-target">
-                      <span className="suggest-label">Target</span>
-                      <span className="suggest-title">
-                        {suggestion.targetTitle}
-                      </span>
-                      <span className="suggest-path">
-                        {suggestion.targetPath}
-                      </span>
-                    </div>
-                    <div className="suggest-sources">
-                      <span className="suggest-label">Sources</span>
-                      <ul className="suggest-source-list">
-                        {suggestion.sources.map((source) => (
-                          <li key={source.id}>
-                            <span className="suggest-title">{source.title}</span>
-                            <span className="suggest-path">{source.path}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
                   </div>
-                  <div className="suggest-actions">
-                    <button
-                      type="button"
-                      className="action-button"
-                      onClick={() => acceptSuggestion(suggestion)}
-                    >
-                      Accept
-                    </button>
-                    <button
-                      type="button"
-                      className="action-button ghost"
-                      onClick={() => dismissSuggestion(suggestion.id)}
-                    >
-                      Dismiss
-                    </button>
+                  <div className="export-stat">
+                    <span className="export-stat-label">Total Folders</span>
+                    <span className="export-stat-value">
+                      {stats.folders.toLocaleString()}
+                    </span>
                   </div>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <section className="panel export-panel">
-          <div className="export-header">
-            <div>
-              <h3>Export cleaned bookmarks</h3>
-              <p>
-                Generate a new Chrome/Edge bookmark HTML file from the current
-                tree order.
-              </p>
+                  <div className="export-stat">
+                    <span className="export-stat-label">Original File</span>
+                    <span className="export-stat-value">{parsed.fileName}</span>
+                  </div>
+                  <div className="export-stat">
+                    <span className="export-stat-label">Format</span>
+                    <span className="export-stat-value">
+                      Chrome/Edge HTML
+                    </span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={downloadExport}
+                >
+                  Download Cleaned Bookmarks
+                </button>
+              </div>
             </div>
-            <button
-              className="primary"
-              type="button"
-              onClick={downloadExport}
-              disabled={!parsed}
-            >
-              Export HTML
-            </button>
-          </div>
-          <div className="export-note">
-            {parsed
-              ? 'This export reflects the current tree order and any changes you made.'
-              : 'Import a bookmark file to enable export.'}
-          </div>
+          )}
+
+          {/* Empty state for tabs when no file is loaded */}
+          {!parsed && activeTab !== 'import' && (
+            <div className="panel">
+              <div className="empty-state">
+                <div className="empty-icon">📁</div>
+                <h2 className="empty-title">No bookmarks loaded</h2>
+                <p className="empty-text">
+                  Import a bookmark file first to access this feature.
+                </p>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => setActiveTab('import')}
+                  style={{ marginTop: '1rem' }}
+                >
+                  Go to Import
+                </button>
+              </div>
+            </div>
+          )}
         </section>
       </main>
     </div>
